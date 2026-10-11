@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jurnalistik-smansade",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-11",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jurnalistik-smansade",
+      "database_id": "d3552b65-1667-4a2f-b6fc-bbc8cbcbe3d2"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "FILES",
+      "id": "d3b6773320614d61b5fe4743125ed6fb"
+    }
+  ]
+}
+
