@@ -26,3 +26,12 @@ Paket ini berisi situs statis dan API Cloudflare Worker, dengan D1 untuk data ap
 - Setelah mengunggah perubahan, commit dan push ke branch `main`; Cloudflare akan menjalankan deployment dari GitHub.
 
 - Border event memakai PNG khusus; otomatis tampil pada avatar juara rank 1 di leaderboard dan tersedia untuk profil admin. API menolak pemakaian oleh akun lain.
+
+
+## Akses border khusus
+
+Border event adalah pilihan border biasa dan tidak otomatis dipasang. Rank 1 mendapat akses otomatis dan aksesnya tersimpan; admin juga dapat memilihnya. Anggota lain melihat pilihan terkunci sampai admin memberikan akses.
+
+Pada D1 Console, jalankan isi `border-access.sql` sekali untuk membuat tabel akses dan migrasi border lama. Untuk membagikan akses, ganti `EMAIL_ANGGOTA` di perintah `INSERT OR IGNORE` dalam file itu dengan email anggota lalu jalankan. Perintah `UPDATE` opsional akan langsung memasang border; tanpa itu anggota dapat memilihnya sendiri di profil. Bagian `DELETE` mencabut akses.
+
+Leaderboard hanya menampilkan border ini jika anggota sedang memilihnya di profil. Akun admin tetap tidak masuk ranking.
