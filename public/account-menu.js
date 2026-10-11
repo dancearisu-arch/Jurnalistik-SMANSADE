@@ -26,7 +26,7 @@
     '23':'https://ar-hosting.pages.dev/f/I5GXGTCWNQ4E2V2QKA3HOQ3HLLIRPNJUIQKAC5HEMPRWRJ6F',
     '24':'https://ar-hosting.pages.dev/f/GNXFUVDJJNZWCVDDIVHEKUCMNSCR55T4RMO5FOBDVTWAAJP7'
   };
-  let sidebarCard = null, editLink = null, desktopLogout = null, mobileLogout = null;
+  let sidebarCard = null, editLink = null, desktopLogout = null, mobileLogout = null, friendshipLink = null;
   let knownToken = token();
   function removeControls() {
     sidebarCard?.remove(); editLink?.remove(); desktopLogout?.remove(); mobileLogout?.remove();
@@ -46,6 +46,32 @@
       removeControls(); location.assign('index.html');
     });
   }
+  function ensureFriendshipLink(sidebar) {
+    friendshipLink = sidebar.querySelector('.friendship-nav-link');
+    if (!friendshipLink) {
+      friendshipLink = document.createElement('a');
+      friendshipLink.className = 'friendship-nav-link';
+      friendshipLink.href = 'friendship.html';
+      friendshipLink.innerHTML = '<span>🤝 Friendship</span><span class="friendship-nav-badge" style="display:none;place-items:center;min-width:19px;height:19px;padding:0 5px;border-radius:99px;background:#e94e69;color:#fff;font-size:10px;font-weight:800"></span>';
+      friendshipLink.style.display = 'flex'; friendshipLink.style.alignItems = 'center'; friendshipLink.style.justifyContent = 'space-between'; friendshipLink.style.gap = '10px';
+      const pointsLink = [...sidebar.querySelectorAll('a')].find(a => /\/profil\.html#rewards$/.test(a.getAttribute('href') || ''));
+      if (pointsLink) pointsLink.after(friendshipLink); else sidebar.append(friendshipLink);
+      friendshipLink.addEventListener('click', closeMobileMenu);
+    }
+  }
+  async function refreshFriendshipBadge() {
+    const badge = document.querySelector('.friendship-nav-badge');
+    if (!badge) return;
+    if (!token()) { badge.hidden = true; badge.style.display = 'none'; return; }
+    try {
+      const response = await fetch('/api/friends', {headers:{Authorization:`Bearer ${token()}`}});
+      if (!response.ok) return;
+      const data = await response.json();
+      const count = Number(data.pending_count || 0) + Number(data.unread_count || 0);
+      badge.textContent = count > 99 ? '99+' : String(count);
+      badge.hidden = count < 1; badge.style.display = count < 1 ? 'none' : 'inline-grid';
+    } catch {}
+  }
   function restoreNav(navright) {
     removeControls();
     navright?.querySelectorAll('[data-account-hidden="1"]').forEach(el => {
@@ -56,8 +82,9 @@
     const navright = document.querySelector('.nav .navright');
     const sidebar = document.querySelector('.nav .links');
     if (!navright || !sidebar) return;
+    ensureFriendshipLink(sidebar);
     const currentToken = token();
-    if (!currentToken) { restoreNav(navright); return; }
+    if (!currentToken) { restoreNav(navright); refreshFriendshipBadge(); return; }
     try {
       const response = await fetch('/api/me', {headers:{Authorization:`Bearer ${currentToken}`}});
       if (response.status === 401) {
@@ -110,6 +137,7 @@
       sidebar.insertBefore(editLink, card.nextSibling); editLink.addEventListener('click', closeMobileMenu);
       desktopLogout = document.createElement('button'); desktopLogout.type = 'button'; desktopLogout.className = 'account-sidebar-logout'; desktopLogout.textContent = 'Keluar'; desktopLogout.addEventListener('click', logout); navright.append(desktopLogout);
       mobileLogout = document.createElement('button'); mobileLogout.type = 'button'; mobileLogout.className = 'account-mobile-logout'; mobileLogout.textContent = 'Keluar dari akun'; mobileLogout.addEventListener('click', logout); sidebar.append(mobileLogout);
+      refreshFriendshipBadge();
     } catch {
       // Pertahankan sesi dan tampilan sebelumnya saat jaringan sementara bermasalah.
     }
@@ -124,4 +152,5 @@
     if (value !== knownToken) { knownToken = value; refreshAccountMenu(); }
   }, 700);
   window.setInterval(() => { if (token()) refreshAccountMenu(); }, 30000);
+  window.setInterval(refreshFriendshipBadge, 10000);
 })();

@@ -51,6 +51,8 @@ WHERE lower(email)=lower('EMAIL_ANGGOTA') AND avatar_border='15';
 ## Penyederhanaan dan hadiah tier
 
 - Editor upload artikel/karya kini memakai panduan singkat; format lanjutan dapat dibuka bila diperlukan. Upload karya yang diterbitkan memberi 10 poin, dan nilai rating menambah poin.
-- Menu akun menampilkan foto/nama pengguna dan badge permintaan teman; permintaan dapat diterima atau ditolak dari sana.
+- Sidebar menampilkan profil, tier, poin, tombol edit profil, dan menu Friendship dengan badge pesan/permintaan baru.
+- Halaman `public/friendship.html` menyediakan daftar teman, permintaan masuk/terkirim, pencarian anggota, dan pesan langsung. Pesan dan permintaan diperbarui otomatis tanpa reload; tabel pesan dibuat Worker saat pertama kali dipakai.
+- Admin bisa memberi atau mencabut akses Border 15 dari panel Friendship. Akses baru hanya bisa diberikan kepada teman; izin yang sudah dibagikan tetap tampil agar bisa dicabut kapan pun.
 - Border baru terbuka otomatis saat tier tercapai: Scribe (100), Wordsmith (300), Storyweaver (700), Wordsmith Adept (1.300), Word Architect (2.100), Lorekeeper (3.200), Mythmaker (4.600), Grand Novelist (6.200), dan Eternal Author (8.000 poin). Border Eternal Author memakai animasi gradien biru-ungu, partikel, serta gambar khusus. Border tersebut dan border tier bisa dipilih di bagian **Banner dan bingkai profil**.
-- Menu edit profil kini diringkas dalam panel lipat; roadmap poin dan hadiah bisa dilihat di bagian **Poin dan hadiah**.
+- Pengaturan profil berada di halaman khusus `public/edit-profil.html`; roadmap poin dan hadiah dapat dilihat di bagian **Poin dan hadiah** pada profil.

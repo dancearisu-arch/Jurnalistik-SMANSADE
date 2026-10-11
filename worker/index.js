@@ -2,6 +2,7 @@ const KINDS = new Set(['dokumentasi','artikel','liputan','karya','suara']);
 const TIER_BORDER_MIN = {16:100,17:300,18:700,19:1300,20:2100,21:3200,22:4600,23:6200,24:8000};
 const tierBorderMin = id => TIER_BORDER_MIN[id] || 0;
 let tierBorderTableReady = false;
+let friendMessagesTableReady = false;
 const json = (data, status=200) => new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const clean = (v,n=12000) => String(v ?? '').trim().slice(0,n);
 const date = () => new Date().toISOString();
@@ -38,6 +39,19 @@ async function ensureTierBorderTable(env) {
     return true;
   } catch(error) {
     console.error('Tier border table init failed:',error?.message||error);
+    return false;
+  }
+}
+async function ensureFriendMessagesTable(env) {
+  if(friendMessagesTableReady)return true;
+  try {
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS friend_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT)').run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_friend_messages_inbox ON friend_messages(recipient_id,read_at,created_at DESC)').run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_friend_messages_pair ON friend_messages(sender_id,recipient_id,created_at DESC)').run();
+    friendMessagesTableReady=true;
+    return true;
+  } catch(error) {
+    console.error('Friend messages table init failed:',error?.message||error);
     return false;
   }
 }
@@ -146,6 +160,40 @@ async function api(req,env,url) {
   if(method==='POST'&&path==='/api/password/forgot')return fail('Pemulihan email belum dikonfigurasi. Hubungi admin untuk mengatur ulang kata sandi.',503);
   if(method==='POST'&&path==='/api/password/reset')return fail('Tautan reset tidak tersedia karena email pemulihan belum dikonfigurasi.',503);
   if(method==='POST'&&path==='/api/friends/request'){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);const d=await bodyJson(req)||{},id=Number(d.user_id);if(id===u.id)return fail('Kamu tidak bisa menambahkan dirimu sendiri.');if(!await env.DB.prepare("SELECT id FROM users WHERE id=? AND role='member'").bind(id).first())return fail('Anggota tidak ditemukan.',404);try{await env.DB.prepare('INSERT INTO friendships(requester_id,addressee_id,status,created_at) VALUES(?,?,?,?)').bind(u.id,id,'pending',date()).run();return json({ok:true},201);}catch{return fail('Permintaan atau pertemanan sudah ada.',409);}}
+  if((method==='GET'||method==='POST')&&path==='/api/friends/messages'){
+    const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);
+    if(!await ensureFriendMessagesTable(env))return fail('Penyimpanan pesan belum siap.',503);
+    if(method==='GET'){
+      const otherId=Number(url.searchParams.get('user_id'));
+      if(!otherId||otherId===u.id)return fail('Pilih teman yang valid.');
+      const linked=await env.DB.prepare("SELECT id FROM friendships WHERE status='accepted' AND ((requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?))").bind(u.id,otherId,otherId,u.id).first();
+      if(!linked)return fail('Pesan hanya tersedia dengan teman yang sudah terhubung.',403);
+      await env.DB.prepare('UPDATE friend_messages SET read_at=? WHERE sender_id=? AND recipient_id=? AND read_at IS NULL').bind(date(),otherId,u.id).run();
+      const messages=await env.DB.prepare('SELECT m.id,m.sender_id,m.recipient_id,m.body,m.created_at,m.read_at,u.name sender_name FROM friend_messages m JOIN users u ON u.id=m.sender_id WHERE (m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?) ORDER BY m.id DESC LIMIT 100').bind(u.id,otherId,otherId,u.id).all();
+      return json({messages:messages.results.reverse()});
+    }
+    const d=await bodyJson(req)||{},otherId=Number(d.user_id),body=clean(d.body,2000);
+    if(!otherId||otherId===u.id||!body)return fail('Isi pesan dan pilih teman terlebih dahulu.');
+    const linked=await env.DB.prepare("SELECT id FROM friendships WHERE status='accepted' AND ((requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?))").bind(u.id,otherId,otherId,u.id).first();
+    if(!linked)return fail('Pesan hanya bisa dikirim kepada teman yang sudah terhubung.',403);
+    const result=await env.DB.prepare('INSERT INTO friend_messages(sender_id,recipient_id,body,created_at) VALUES(?,?,?,?)').bind(u.id,otherId,body,date()).run();
+    return json({ok:true,id:result.meta.last_row_id},201);
+  }
+  if(method==='GET'&&path==='/api/admin/border-access'){
+    const u=await needUser(req,env);if(!u||u.role!=='admin')return fail('Khusus admin.',403);
+    if(!await ensureTierBorderTable(env))return fail('Penyimpanan akses border belum siap.',503);
+    const rows=await env.DB.prepare("SELECT u.id user_id,u.name,u.avatar_file,u.avatar_border,CASE WHEN a.user_id IS NULL THEN 0 ELSE 1 END has_access,CASE WHEN EXISTS(SELECT 1 FROM friendships f WHERE f.status='accepted' AND ((f.requester_id=? AND f.addressee_id=u.id) OR (f.addressee_id=? AND f.requester_id=u.id))) THEN 1 ELSE 0 END is_friend FROM users u LEFT JOIN user_border_access a ON a.user_id=u.id AND a.border_id=15 WHERE u.role='member' AND (EXISTS(SELECT 1 FROM friendships f WHERE f.status='accepted' AND ((f.requester_id=? AND f.addressee_id=u.id) OR (f.addressee_id=? AND f.requester_id=u.id))) OR a.user_id IS NOT NULL) ORDER BY u.name COLLATE NOCASE").bind(u.id,u.id,u.id,u.id).all();
+    return json({members:rows.results});
+  }
+  if(method==='POST'&&path==='/api/admin/border-access'){
+    const u=await needUser(req,env);if(!u||u.role!=='admin')return fail('Khusus admin.',403);
+    if(!await ensureTierBorderTable(env))return fail('Penyimpanan akses border belum siap.',503);
+    const d=await bodyJson(req)||{},id=Number(d.user_id);if(!Number.isInteger(id)||id<1)return fail('Pilih anggota yang valid.');
+    const friend=await env.DB.prepare("SELECT u.id FROM users u JOIN friendships f ON f.status='accepted' AND ((f.requester_id=? AND f.addressee_id=u.id) OR (f.addressee_id=? AND f.requester_id=u.id)) WHERE u.id=? AND u.role='member'").bind(u.id,u.id,id).first();
+    if(!friend)return fail('Akses hanya dapat dibagikan kepada anggota yang berteman dengan admin.',403);
+    await env.DB.prepare('INSERT OR IGNORE INTO user_border_access(user_id,border_id,granted_at) VALUES(?,15,?)').bind(id,date()).run();
+    return json({ok:true,has_access:true});
+  }
   const accept=path.match(/^\/api\/friends\/(\d+)\/accept$/);if(method==='POST'&&accept){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);const r=await env.DB.prepare("UPDATE friendships SET status='accepted' WHERE id=? AND addressee_id=? AND status='pending'").bind(Number(accept[1]),u.id).run();return r.meta.changes?json({ok:true}):fail('Permintaan pertemanan tidak ditemukan.',404);}
   if(method==='POST'&&path==='/api/admin/users/points'){const u=await needUser(req,env);if(!u||u.role!=='admin')return fail('Khusus admin.',403);const d=await bodyJson(req)||{},id=Number(d.user_id),target=Number(d.points);if(!Number.isInteger(target)||target<0||target>1e9)return fail('Poin tidak valid.');const old=await env.DB.prepare('SELECT points_bonus,points_adjustment FROM users WHERE id=?').bind(id).first();if(!old)return fail('Akun tidak ditemukan.',404);const earned=(await points(env,id))-old.points_bonus-old.points_adjustment;await env.DB.prepare('UPDATE users SET points_adjustment=? WHERE id=?').bind(target-old.points_bonus-earned,id).run();await syncTierBorders(env,id,target);return json({ok:true,points:target});}
   if(method==='POST'&&path==='/api/admin/featured-liputan'){const u=await needUser(req,env);if(!u||u.role!=='admin')return fail('Khusus admin.',403);const d=await bodyJson(req)||{},id=Number(d.content_id);if(!await env.DB.prepare("SELECT id FROM contents WHERE id=? AND kind='liputan' AND status='published' AND mime LIKE 'video/%'").bind(id).first())return fail('Pilih liputan terbit yang valid.');await env.DB.prepare('INSERT INTO featured_liputan(id,content_id,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET content_id=excluded.content_id,updated_at=excluded.updated_at').bind(id,date()).run();return json({ok:true});}
@@ -165,7 +213,7 @@ async function api(req,env,url) {
   }
   if(method==='GET'&&path==='/api/featured-liputan'){const x=await env.DB.prepare(`SELECT x.id,x.title,x.body,x.file_name,x.original_name,x.mime,x.created_at,u.name author FROM featured_liputan f JOIN contents x ON x.id=f.content_id JOIN users u ON u.id=x.author_id WHERE f.id=1 AND x.status='published' AND x.kind='liputan'`).first();return json({content:x||null});}
   if(method==='GET'&&path==='/api/profile'){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);return json({profile:await profile(env,u.id,true)});}
-  if(method==='GET'&&path==='/api/friends'){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);const a=await env.DB.prepare(`SELECT f.id,u.id user_id,u.name,u.avatar_file FROM friendships f JOIN users u ON u.id=CASE WHEN f.requester_id=? THEN f.addressee_id ELSE f.requester_id END WHERE f.status='accepted' AND (f.requester_id=? OR f.addressee_id=?) ORDER BY u.name`).bind(u.id,u.id,u.id).all();const b=await env.DB.prepare(`SELECT f.id,u.id user_id,u.name,u.avatar_file FROM friendships f JOIN users u ON u.id=f.requester_id WHERE f.addressee_id=? AND f.status='pending' ORDER BY f.created_at DESC`).bind(u.id).all();return json({friends:a.results,incoming:b.results});}
+  if(method==='GET'&&path==='/api/friends'){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);if(!await ensureFriendMessagesTable(env))return fail('Penyimpanan pesan belum siap.',503);const a=await env.DB.prepare(`SELECT f.id,u.id user_id,u.name,u.avatar_file FROM friendships f JOIN users u ON u.id=CASE WHEN f.requester_id=? THEN f.addressee_id ELSE f.requester_id END WHERE f.status='accepted' AND (f.requester_id=? OR f.addressee_id=?) ORDER BY u.name`).bind(u.id,u.id,u.id).all();const b=await env.DB.prepare(`SELECT f.id,u.id user_id,u.name,u.avatar_file FROM friendships f JOIN users u ON u.id=f.requester_id WHERE f.addressee_id=? AND f.status='pending' ORDER BY f.created_at DESC`).bind(u.id).all();const c=await env.DB.prepare(`SELECT f.id,u.id user_id,u.name,u.avatar_file FROM friendships f JOIN users u ON u.id=f.addressee_id WHERE f.requester_id=? AND f.status='pending' ORDER BY f.created_at DESC`).bind(u.id).all();const unread=await env.DB.prepare("SELECT m.sender_id user_id,COUNT(*) unread_count FROM friend_messages m JOIN friendships f ON f.status='accepted' AND ((f.requester_id=m.sender_id AND f.addressee_id=m.recipient_id) OR (f.requester_id=m.recipient_id AND f.addressee_id=m.sender_id)) WHERE m.recipient_id=? AND m.read_at IS NULL GROUP BY m.sender_id").bind(u.id).all();const counts=new Map(unread.results.map(x=>[x.user_id,Number(x.unread_count)]));const friends=a.results.map(x=>({...x,unread:counts.get(x.user_id)||0}));return json({friends,incoming:b.results,outgoing:c.results,pending_count:b.results.length,unread_count:unread.results.reduce((n,x)=>n+Number(x.unread_count),0)});}
   const fs=path.match(/^\/api\/friends\/status\/(\d+)$/);if(method==='GET'&&fs){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);const id=Number(fs[1]),f=await env.DB.prepare('SELECT id,requester_id,addressee_id,status FROM friendships WHERE (requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?)').bind(u.id,id,id,u.id).first();return json({friendship:f||null,viewer_id:u.id});}
   if(method==='GET'&&path==='/api/admin/pending'){const u=await needUser(req,env);if(!u||u.role!=='admin')return fail('Khusus admin.',403);const r=await env.DB.prepare('SELECT x.id,x.kind,x.title,x.body,x.created_at,u.name author FROM contents x JOIN users u ON u.id=x.author_id WHERE x.status=? ORDER BY x.created_at').bind('pending').all();return json({pending:r.results});}
   if(method==='GET'&&path==='/api/admin/users'){const u=await needUser(req,env);if(!u||u.role!=='admin')return fail('Khusus admin.',403);const rows=await env.DB.prepare(`SELECT u.id,u.name,u.email,u.role,u.points_bonus,u.points_adjustment,u.created_at,(SELECT COUNT(*) FROM contents x WHERE x.author_id=u.id AND x.kind='karya') work_count,u.points_bonus+u.points_adjustment+10*(SELECT COUNT(*) FROM contents x WHERE x.author_id=u.id AND x.kind='karya' AND x.status='published')+COALESCE((SELECT SUM(r.value) FROM ratings r JOIN contents x ON x.id=r.content_id WHERE x.author_id=u.id AND x.kind IN ('dokumentasi','karya') AND x.status='published'),0) points FROM users u ORDER BY u.created_at DESC`).all();return json({users:rows.results});}
@@ -191,6 +239,7 @@ async function api(req,env,url) {
   const rating=path.match(/^\/api\/contents\/(\d+)\/rating$/);if(method==='POST'&&rating){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);const d=await bodyJson(req)||{},v=Number(d.value);if(v<1||v>5)return fail('Rating harus bernilai 1 sampai 5.');const c=await env.DB.prepare('SELECT author_id,kind,status FROM contents WHERE id=?').bind(Number(rating[1])).first();if(!c||c.status!=='published')return fail('Karya tidak ditemukan.',404);if(!['dokumentasi','karya'].includes(c.kind))return fail('Rating hanya tersedia untuk dokumentasi dan karya siswa.');if(c.author_id===u.id)return fail('Kamu tidak dapat memberi rating pada unggahan sendiri.');await env.DB.prepare('INSERT INTO ratings(content_id,user_id,value) VALUES(?,?,?) ON CONFLICT(content_id,user_id) DO UPDATE SET value=excluded.value').bind(Number(rating[1]),u.id,v).run();await syncTierBorders(env,c.author_id,await points(env,c.author_id));return json({ok:true});}
   if(method==='DELETE'){
     const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);
+    const borderAccess=path.match(/^\/api\/admin\/border-access\/(\d+)$/);if(borderAccess){if(u.role!=='admin')return fail('Khusus admin.',403);const id=Number(borderAccess[1]);const grant=await env.DB.prepare('SELECT user_id FROM user_border_access WHERE user_id=? AND border_id=15').bind(id).first();if(!grant)return fail('Akses border tidak ditemukan.',404);await env.DB.batch([env.DB.prepare('DELETE FROM user_border_access WHERE user_id=? AND border_id=15').bind(id),env.DB.prepare("UPDATE users SET avatar_border='0' WHERE id=? AND avatar_border='15'").bind(id)]);return json({ok:true,has_access:false});}
     const cm=path.match(/^\/api\/comments\/(\d+)$/);if(cm){const row=await env.DB.prepare('SELECT user_id,created_at FROM comments WHERE id=?').bind(Number(cm[1])).first();if(!row)return fail('Komentar tidak ditemukan.',404);if(u.role!=='admin'&&(u.id!==row.user_id||Date.now()-Date.parse(row.created_at)>15*60*1000))return fail('Komentar hanya bisa dihapus admin atau penulis dalam 15 menit.',403);await env.DB.prepare('DELETE FROM comments WHERE id=?').bind(Number(cm[1])).run();return json({ok:true});}
     const fr=path.match(/^\/api\/friends\/(\d+)$/);if(fr){const r=await env.DB.prepare('DELETE FROM friendships WHERE id=? AND (requester_id=? OR addressee_id=?)').bind(Number(fr[1]),u.id,u.id).run();return r.meta.changes?json({ok:true}):fail('Relasi pertemanan tidak ditemukan.',404);}
     const du=path.match(/^\/api\/admin\/users\/(\d+)$/);if(du){if(u.role!=='admin')return fail('Khusus admin.',403);const id=Number(du[1]);if(id===u.id)return fail('Admin tidak dapat menghapus akunnya sendiri.',400);const who=await env.DB.prepare('SELECT id,role,avatar_file,banner_file FROM users WHERE id=?').bind(id).first();if(!who)return fail('Akun tidak ditemukan.',404);if(who.role==='admin')return fail('Akun admin tidak dapat dihapus dari panel anggota.',403);const files=await env.DB.prepare('SELECT file_name FROM contents WHERE author_id=? AND file_name IS NOT NULL').bind(id).all();await env.DB.batch([env.DB.prepare('DELETE FROM featured_liputan WHERE content_id IN (SELECT id FROM contents WHERE author_id=?)').bind(id),env.DB.prepare('DELETE FROM featured_members WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM comments WHERE user_id=? OR content_id IN (SELECT id FROM contents WHERE author_id=?)').bind(id,id),env.DB.prepare('DELETE FROM ratings WHERE user_id=? OR content_id IN (SELECT id FROM contents WHERE author_id=?)').bind(id,id),env.DB.prepare('DELETE FROM friendships WHERE requester_id=? OR addressee_id=?').bind(id,id),env.DB.prepare('DELETE FROM password_resets WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),env.DB.prepare('DELETE FROM contents WHERE author_id=?').bind(id),env.DB.prepare('DELETE FROM users WHERE id=?').bind(id)]);for(const f of [...files.results.map(x=>x.file_name),who.avatar_file,who.banner_file].filter(Boolean))await env.FILES.delete(f);return json({ok:true});}
