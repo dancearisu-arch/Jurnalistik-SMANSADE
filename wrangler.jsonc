@@ -20,10 +20,9 @@
       "binding": "FILES",
       "id": "d3b6773320614d61b5fe4743125ed6fb"
     }
-  ]
-{
+  ],
   "observability": {
-    "enabled": false,
+    "enabled": true,
     "head_sampling_rate": 1,
     "redact_query_string": false,
     "logs": {
@@ -40,7 +39,6 @@
     "issues": {
       "enabled": true
     }
-  },
-}
+  }
 }
 
