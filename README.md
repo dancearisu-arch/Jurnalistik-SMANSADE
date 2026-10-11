@@ -56,3 +56,11 @@ WHERE lower(email)=lower('EMAIL_ANGGOTA') AND avatar_border='15';
 - Admin bisa memberi atau mencabut akses Border 15 dari panel Friendship. Akses baru hanya bisa diberikan kepada teman; izin yang sudah dibagikan tetap tampil agar bisa dicabut kapan pun.
 - Border baru terbuka otomatis saat tier tercapai: Scribe (100), Wordsmith (300), Storyweaver (700), Wordsmith Adept (1.300), Word Architect (2.100), Lorekeeper (3.200), Mythmaker (4.600), Grand Novelist (6.200), dan Eternal Author (8.000 poin). Border Eternal Author memakai animasi gradien biru-ungu, partikel, serta gambar khusus. Border tersebut dan border tier bisa dipilih di bagian **Banner dan bingkai profil**.
 - Pengaturan profil berada di halaman khusus `public/edit-profil.html`; roadmap poin dan hadiah dapat dilihat di bagian **Poin dan hadiah** pada profil.
+
+
+## Pesan Friendship
+
+- Pengirim dapat mengedit atau menghapus pesan sendiri selama 5 menit sejak pesan dikirim. Batas waktu diperiksa lagi oleh Worker.
+- Kedua teman dapat memberi atau membatalkan reaksi 👍 ❤️ 😂 😮 😢 👏.
+- Tombol **Hapus seluruh pesan** menghapus riwayat percakapan untuk kedua pihak dan menampilkan konfirmasi sebelum diproses.
+- Worker membuat tabel reaksi dan menambahkan kolom `edited_at` secara otomatis saat API pesan pertama kali digunakan. Struktur lengkapnya juga tercantum di `schema.sql`.

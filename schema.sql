@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS contents(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TE
 CREATE TABLE IF NOT EXISTS comments(id INTEGER PRIMARY KEY AUTOINCREMENT,content_id INTEGER NOT NULL REFERENCES contents(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id),body TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ratings(id INTEGER PRIMARY KEY AUTOINCREMENT,content_id INTEGER NOT NULL REFERENCES contents(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id),value INTEGER NOT NULL CHECK(value BETWEEN 1 AND 5),UNIQUE(content_id,user_id));
 CREATE TABLE IF NOT EXISTS friendships(id INTEGER PRIMARY KEY AUTOINCREMENT,requester_id INTEGER NOT NULL REFERENCES users(id),addressee_id INTEGER NOT NULL REFERENCES users(id),status TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL,UNIQUE(requester_id,addressee_id));
-CREATE TABLE IF NOT EXISTS friend_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT);
+CREATE TABLE IF NOT EXISTS friend_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT,edited_at TEXT);
+CREATE TABLE IF NOT EXISTS friend_message_reactions(id INTEGER PRIMARY KEY AUTOINCREMENT,message_id INTEGER NOT NULL REFERENCES friend_messages(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,reaction TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(message_id,user_id,reaction));
 CREATE TABLE IF NOT EXISTS password_resets(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS featured_members(slot INTEGER PRIMARY KEY CHECK(slot BETWEEN 1 AND 2),user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,quote TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS featured_liputan(id INTEGER PRIMARY KEY CHECK(id=1),content_id INTEGER NOT NULL REFERENCES contents(id) ON DELETE CASCADE,updated_at TEXT NOT NULL);
@@ -19,5 +20,6 @@ CREATE INDEX IF NOT EXISTS idx_contents_kind_created ON contents(kind,status,cre
 CREATE INDEX IF NOT EXISTS idx_comments_content ON comments(content_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_friend_messages_inbox ON friend_messages(recipient_id,read_at,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_friend_messages_pair ON friend_messages(sender_id,recipient_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_friend_reactions_message ON friend_message_reactions(message_id);
 
 CREATE TABLE IF NOT EXISTS user_border_access(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,border_id INTEGER NOT NULL,granted_at TEXT NOT NULL,PRIMARY KEY(user_id,border_id));

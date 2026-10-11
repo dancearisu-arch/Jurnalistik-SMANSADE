@@ -45,9 +45,13 @@ async function ensureTierBorderTable(env) {
 async function ensureFriendMessagesTable(env) {
   if(friendMessagesTableReady)return true;
   try {
-    await env.DB.prepare('CREATE TABLE IF NOT EXISTS friend_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT)').run();
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS friend_messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,body TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT,edited_at TEXT)').run();
+    try { await env.DB.prepare('ALTER TABLE friend_messages ADD COLUMN edited_at TEXT').run(); }
+    catch(error) { if(!/duplicate column/i.test(error?.message||''))throw error; }
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS friend_message_reactions(id INTEGER PRIMARY KEY AUTOINCREMENT,message_id INTEGER NOT NULL REFERENCES friend_messages(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,reaction TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(message_id,user_id,reaction))').run();
     await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_friend_messages_inbox ON friend_messages(recipient_id,read_at,created_at DESC)').run();
     await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_friend_messages_pair ON friend_messages(sender_id,recipient_id,created_at DESC)').run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_friend_reactions_message ON friend_message_reactions(message_id)').run();
     friendMessagesTableReady=true;
     return true;
   } catch(error) {
@@ -169,8 +173,10 @@ async function api(req,env,url) {
       const linked=await env.DB.prepare("SELECT id FROM friendships WHERE status='accepted' AND ((requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?))").bind(u.id,otherId,otherId,u.id).first();
       if(!linked)return fail('Pesan hanya tersedia dengan teman yang sudah terhubung.',403);
       await env.DB.prepare('UPDATE friend_messages SET read_at=? WHERE sender_id=? AND recipient_id=? AND read_at IS NULL').bind(date(),otherId,u.id).run();
-      const messages=await env.DB.prepare('SELECT m.id,m.sender_id,m.recipient_id,m.body,m.created_at,m.read_at,u.name sender_name FROM friend_messages m JOIN users u ON u.id=m.sender_id WHERE (m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?) ORDER BY m.id DESC LIMIT 100').bind(u.id,otherId,otherId,u.id).all();
-      return json({messages:messages.results.reverse()});
+      const messages=await env.DB.prepare('SELECT m.id,m.sender_id,m.recipient_id,m.body,m.created_at,m.read_at,m.edited_at,u.name sender_name FROM friend_messages m JOIN users u ON u.id=m.sender_id WHERE (m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?) ORDER BY m.id DESC LIMIT 100').bind(u.id,otherId,otherId,u.id).all();
+      const messageRows=messages.results.reverse();let reactions=[];
+      if(messageRows.length){const ids=messageRows.map(x=>x.id),slots=ids.map(()=>'?').join(',');const r=await env.DB.prepare(`SELECT message_id,user_id,reaction FROM friend_message_reactions WHERE message_id IN (${slots})`).bind(...ids).all();reactions=r.results;}
+      return json({messages:messageRows,reactions});
     }
     const d=await bodyJson(req)||{},otherId=Number(d.user_id),body=clean(d.body,2000);
     if(!otherId||otherId===u.id||!body)return fail('Isi pesan dan pilih teman terlebih dahulu.');
@@ -178,6 +184,23 @@ async function api(req,env,url) {
     if(!linked)return fail('Pesan hanya bisa dikirim kepada teman yang sudah terhubung.',403);
     const result=await env.DB.prepare('INSERT INTO friend_messages(sender_id,recipient_id,body,created_at) VALUES(?,?,?,?)').bind(u.id,otherId,body,date()).run();
     return json({ok:true,id:result.meta.last_row_id},201);
+  }
+  const messageEdit=path.match(/^\/api\/friends\/messages\/(\d+)\/edit$/);if(method==='POST'&&messageEdit){
+    const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);if(!await ensureFriendMessagesTable(env))return fail('Penyimpanan pesan belum siap.',503);
+    const id=Number(messageEdit[1]),d=await bodyJson(req)||{},body=clean(d.body,2000);if(!body)return fail('Pesan tidak boleh kosong.');
+    const row=await env.DB.prepare('SELECT sender_id,created_at FROM friend_messages WHERE id=?').bind(id).first();if(!row)return fail('Pesan tidak ditemukan.',404);
+    if(row.sender_id!==u.id)return fail('Kamu hanya dapat mengedit pesanmu sendiri.',403);if(Date.now()-Date.parse(row.created_at)>5*60*1000)return fail('Pesan hanya dapat diedit dalam 5 menit setelah dikirim.',403);
+    await env.DB.prepare('UPDATE friend_messages SET body=?,edited_at=? WHERE id=? AND sender_id=?').bind(body,date(),id,u.id).run();return json({ok:true});
+  }
+  const messageReaction=path.match(/^\/api\/friends\/messages\/(\d+)\/reaction$/);if(method==='POST'&&messageReaction){
+    const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);if(!await ensureFriendMessagesTable(env))return fail('Penyimpanan pesan belum siap.',503);
+    const id=Number(messageReaction[1]),d=await bodyJson(req)||{},reaction=clean(d.reaction,8);if(!['👍','❤️','😂','😮','😢','👏'].includes(reaction))return fail('Reaksi tidak tersedia.');
+    const message=await env.DB.prepare('SELECT sender_id,recipient_id FROM friend_messages WHERE id=?').bind(id).first();if(!message)return fail('Pesan tidak ditemukan.',404);
+    if(message.sender_id!==u.id&&message.recipient_id!==u.id)return fail('Kamu tidak dapat bereaksi pada pesan ini.',403);
+    const linked=await env.DB.prepare("SELECT id FROM friendships WHERE status='accepted' AND ((requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?))").bind(message.sender_id,message.recipient_id,message.recipient_id,message.sender_id).first();if(!linked)return fail('Reaksi hanya tersedia untuk percakapan teman.',403);
+    const existing=await env.DB.prepare('SELECT id FROM friend_message_reactions WHERE message_id=? AND user_id=? AND reaction=?').bind(id,u.id,reaction).first();
+    if(existing)await env.DB.prepare('DELETE FROM friend_message_reactions WHERE id=?').bind(existing.id).run();else await env.DB.prepare('INSERT OR IGNORE INTO friend_message_reactions(message_id,user_id,reaction,created_at) VALUES(?,?,?,?)').bind(id,u.id,reaction,date()).run();
+    return json({ok:true,active:!existing});
   }
   if(method==='GET'&&path==='/api/admin/border-access'){
     const u=await needUser(req,env);if(!u||u.role!=='admin')return fail('Khusus admin.',403);
@@ -239,6 +262,14 @@ async function api(req,env,url) {
   const rating=path.match(/^\/api\/contents\/(\d+)\/rating$/);if(method==='POST'&&rating){const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);const d=await bodyJson(req)||{},v=Number(d.value);if(v<1||v>5)return fail('Rating harus bernilai 1 sampai 5.');const c=await env.DB.prepare('SELECT author_id,kind,status FROM contents WHERE id=?').bind(Number(rating[1])).first();if(!c||c.status!=='published')return fail('Karya tidak ditemukan.',404);if(!['dokumentasi','karya'].includes(c.kind))return fail('Rating hanya tersedia untuk dokumentasi dan karya siswa.');if(c.author_id===u.id)return fail('Kamu tidak dapat memberi rating pada unggahan sendiri.');await env.DB.prepare('INSERT INTO ratings(content_id,user_id,value) VALUES(?,?,?) ON CONFLICT(content_id,user_id) DO UPDATE SET value=excluded.value').bind(Number(rating[1]),u.id,v).run();await syncTierBorders(env,c.author_id,await points(env,c.author_id));return json({ok:true});}
   if(method==='DELETE'){
     const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);
+    if(path==='/api/friends/messages'){
+      if(!await ensureFriendMessagesTable(env))return fail('Penyimpanan pesan belum siap.',503);
+      const otherId=Number(url.searchParams.get('user_id'));if(!otherId||otherId===u.id)return fail('Pilih teman yang valid.');
+      const linked=await env.DB.prepare("SELECT id FROM friendships WHERE status='accepted' AND ((requester_id=? AND addressee_id=?) OR (requester_id=? AND addressee_id=?))").bind(u.id,otherId,otherId,u.id).first();
+      if(!linked)return fail('Riwayat hanya dapat dihapus pada percakapan dengan teman.',403);
+      await env.DB.prepare('DELETE FROM friend_messages WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)').bind(u.id,otherId,otherId,u.id).run();return json({ok:true});
+    }
+    const messageDelete=path.match(/^\/api\/friends\/messages\/(\d+)$/);if(messageDelete){if(!await ensureFriendMessagesTable(env))return fail('Penyimpanan pesan belum siap.',503);const id=Number(messageDelete[1]),row=await env.DB.prepare('SELECT sender_id,created_at FROM friend_messages WHERE id=?').bind(id).first();if(!row)return fail('Pesan tidak ditemukan.',404);if(row.sender_id!==u.id)return fail('Kamu hanya dapat menghapus pesanmu sendiri.',403);if(Date.now()-Date.parse(row.created_at)>5*60*1000)return fail('Pesan hanya dapat dihapus dalam 5 menit setelah dikirim.',403);await env.DB.prepare('DELETE FROM friend_messages WHERE id=? AND sender_id=?').bind(id,u.id).run();return json({ok:true});}
     const borderAccess=path.match(/^\/api\/admin\/border-access\/(\d+)$/);if(borderAccess){if(u.role!=='admin')return fail('Khusus admin.',403);const id=Number(borderAccess[1]);const grant=await env.DB.prepare('SELECT user_id FROM user_border_access WHERE user_id=? AND border_id=15').bind(id).first();if(!grant)return fail('Akses border tidak ditemukan.',404);await env.DB.batch([env.DB.prepare('DELETE FROM user_border_access WHERE user_id=? AND border_id=15').bind(id),env.DB.prepare("UPDATE users SET avatar_border='0' WHERE id=? AND avatar_border='15'").bind(id)]);return json({ok:true,has_access:false});}
     const cm=path.match(/^\/api\/comments\/(\d+)$/);if(cm){const row=await env.DB.prepare('SELECT user_id,created_at FROM comments WHERE id=?').bind(Number(cm[1])).first();if(!row)return fail('Komentar tidak ditemukan.',404);if(u.role!=='admin'&&(u.id!==row.user_id||Date.now()-Date.parse(row.created_at)>15*60*1000))return fail('Komentar hanya bisa dihapus admin atau penulis dalam 15 menit.',403);await env.DB.prepare('DELETE FROM comments WHERE id=?').bind(Number(cm[1])).run();return json({ok:true});}
     const fr=path.match(/^\/api\/friends\/(\d+)$/);if(fr){const r=await env.DB.prepare('DELETE FROM friendships WHERE id=? AND (requester_id=? OR addressee_id=?)').bind(Number(fr[1]),u.id,u.id).run();return r.meta.changes?json({ok:true}):fail('Relasi pertemanan tidak ditemukan.',404);}
