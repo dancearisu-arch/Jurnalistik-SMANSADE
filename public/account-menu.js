@@ -3,6 +3,7 @@
   const escapeText = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let knownToken = token();
   let currentArea = null;
+  let currentSidebarIdentity = null;
 
   async function refreshAccountMenu() {
     const navright = document.querySelector('.nav .navright');
@@ -11,6 +12,8 @@
     if (!currentToken) {
       currentArea?.remove();
       currentArea = null;
+      currentSidebarIdentity?.remove();
+      currentSidebarIdentity = null;
       navright.querySelectorAll('[data-account-hidden="1"]').forEach(el => { el.style.display = ''; el.removeAttribute('data-account-hidden'); });
       return;
     }
@@ -44,6 +47,21 @@
       name.className = 'account-name';
       name.textContent = profile.name || 'Profil saya';
       identity.append(name);
+      const sidebar = document.querySelector('.nav .links');
+      currentSidebarIdentity?.remove();
+      currentSidebarIdentity = null;
+      if (sidebar) {
+        currentSidebarIdentity = identity.cloneNode(true);
+        currentSidebarIdentity.className = 'account-sidebar-profile';
+        currentSidebarIdentity.addEventListener('click', () => {
+          sidebar.classList.remove('open');
+          document.body.classList.remove('menu-open');
+          const toggle = document.querySelector('.nav-toggle');
+          toggle?.setAttribute('aria-expanded', 'false');
+          if (toggle) toggle.textContent = '☰';
+        });
+        sidebar.prepend(currentSidebarIdentity);
+      }
       const noticeButton = document.createElement('button');
       noticeButton.type = 'button';
       noticeButton.className = 'account-bell';
@@ -115,6 +133,8 @@
     } catch {
       currentArea?.remove();
       currentArea = null;
+      currentSidebarIdentity?.remove();
+      currentSidebarIdentity = null;
       localStorage.removeItem('js-token');
       localStorage.removeItem('js-user');
       navright.querySelectorAll('[data-account-hidden="1"]').forEach(el => { el.style.display = ''; el.removeAttribute('data-account-hidden'); });

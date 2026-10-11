@@ -30,7 +30,7 @@ Paket ini berisi situs statis dan API Cloudflare Worker, dengan D1 untuk data ap
 
 ## Akses border khusus
 
-Border dari link `PBSEQ...` hanya dapat dipakai admin secara default. Member lain melihat pilihan terkunci sampai admin memberi izin lewat D1 Console. Border ini tidak muncul di leaderboard; leaderboard menampilkan border profil normal (Border 1–14) dan hadiah tier yang telah terbuka (Border 16–24) mengelilingi avatar. Border khusus admin (Border 15) tetap tidak ditampilkan.
+Border dari link `PBSEQ...` hanya dapat dipakai admin secara default. Member lain melihat pilihan terkunci sampai admin memberi izin lewat D1 Console. Border tier tertinggi otomatis dipasang saat poin mencukupi jika profil belum memilih border lain. Border ini tampil pada avatar profil dan leaderboard; border khusus admin (Border 15) tetap tidak ditampilkan di leaderboard.
 
 Setelah mengunggah perubahan, jalankan `border-access.sql` sekali di D1 Console. Migrasi ini mencabut akses lama yang sebelumnya diberikan otomatis kepada Top 1 dan menghapus border khusus dari profil member. Untuk memberi izin, ganti `EMAIL_ANGGOTA` pada query berikut lalu jalankan di D1 Console:
 
