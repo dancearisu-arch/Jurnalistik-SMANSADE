@@ -17,7 +17,7 @@ async function bodyJson(req) { try{return await req.json();}catch{return null;} 
 async function userFor(req,env) {
   const t=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim();
   if(!t)return null;
-  return await env.DB.prepare('SELECT u.id,u.name,u.email,u.role,u.avatar_file FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?').bind(t,date()).first();
+  return await env.DB.prepare('SELECT u.id,u.name,u.email,u.role,u.avatar_file,u.avatar_border FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?').bind(t,date()).first();
 }
 const needUser = async (req,env) => { const u=await userFor(req,env); return u || null; };
 const fail = (message,status=400) => json({error:message},status);
@@ -116,7 +116,20 @@ async function api(req,env,url) {
   const path=url.pathname, method=req.method;
   if(method==='OPTIONS')return new Response(null,{status:204,headers:{'access-control-allow-origin':'*','access-control-allow-headers':'Content-Type, Authorization','access-control-allow-methods':'GET, POST, DELETE, OPTIONS'}});
   if(method==='GET' && path==='/api/health')return json({ok:true,service:'Jurnalistik Smansade'});
-  if(method==='GET' && path==='/api/me')return json({user:await userFor(req,env)});
+  if(method==='GET' && path==='/api/me'){
+    const user=await userFor(req,env);
+    if(!user)return json({user:null});
+    user.points=await points(env,user.id);
+    const tier=tierFor(user.points); user.tier=tier.name; user.tier_class=tier.className;
+    const newlyUnlocked=await syncTierBorders(env,user.id,user.points);
+    let border=String(user.avatar_border||'0');
+    if(border==='0'&&newlyUnlocked)border=String(newlyUnlocked);
+    if(border==='15'&&user.role!=='admin'&&!await hasBorderAccess(env,user.id))border='0';
+    const minBorderPoints=tierBorderMin(Number(border));
+    if(minBorderPoints&&!await hasTierBorderAccess(env,user.id,Number(border),user.points))border='0';
+    user.avatar_border=border;
+    return json({user});
+  }
   if(method==='POST' && path==='/api/register'){
     const d=await bodyJson(req); if(!d)return fail('Permintaan JSON tidak valid.');
     const name=clean(d.name,100),email=clean(d.email,254).toLowerCase(),pw=String(d.password||'');

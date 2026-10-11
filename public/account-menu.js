@@ -1,156 +1,106 @@
 (() => {
   const token = () => localStorage.getItem('js-token') || '';
-  const escapeText = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const borders = {
+    '1':'https://ar-hosting.pages.dev/f/GZGXC4CZM53UO4SLGM2FSVCZK5MBPB7YDOM3N3SR6RHLU5S6',
+    '2':'https://ar-hosting.pages.dev/f/OBTUEYTPKZGEKQ2PNRTHOULZGEBP3XR2AUPFKPFILBXTRIEC',
+    '3':'https://ar-hosting.pages.dev/f/HFIDK3KHIM3EKTSSKBGEUTSFIYJ6YKZ77XSV6PEVCXRVFL6C',
+    '4':'https://ar-hosting.pages.dev/f/IE2XI2KMKVUW22LSI5KUQVLYONNX6XC3NYD6QVAGOWJKD6LA',
+    '5':'https://ar-hosting.pages.dev/f/HEZHO33RMZFEW3ZUPBVFISKNNYJ2EGORGOHKGQU4455ZZBK7',
+    '6':'https://ar-hosting.pages.dev/f/IR3GCYRUGZ3GYVKUJ5KWCQK2O4PEMFZ2WY7J7POKY7FKDPQW',
+    '7':'https://ar-hosting.pages.dev/f/JZQXM3SHK5MUMSDBKUYVO3DKNJYGW4WG7UUXRVY77JOP2QD4',
+    '8':'https://ar-hosting.pages.dev/f/JBFES6LOONWEUTSVOR3GWZ2BGL5FU76LPS23LK4V52T2RFEO',
+    '9':'https://ar-hosting.pages.dev/f/IZDDOST2JBFXKM2KKRSEQUCUKDEPNWICABILVDBY5VDQV6HY',
+    '10':'https://ar-hosting.pages.dev/f/PJZFQ2CNJVFEY4C2IFSG2U3RNBSOFQFQO7H2GXNHLUEAUS5S',
+    '11':'https://ar-hosting.pages.dev/f/J4YGK4SWK5BTIRKCKRXHIY2XKQMYZ65KIQUQFNK2UVDWBZBB',
+    '12':'https://ar-hosting.pages.dev/f/OY4DCQTOPBWGKRSEMZDWYRLNKSMDIR62PQQLKHDNK7S6PPHW',
+    '13':'https://ar-hosting.pages.dev/f/PBRUKYSIOY3WYS2GOJCU45SPKRFBTGZ2QJ7HNPOQBHYTC4TK',
+    '14':'https://ar-hosting.pages.dev/f/GR4GYU3ZJMZGW5TRJNCFMM2NLGXHIFCVPMO7XIR5NJ3CVOSW',
+    '15':'https://ar-hosting.pages.dev/f/PBSEQ2SSKNFGKS3PMYZTS5TEMJFCAUDC7BK2GHGQXDSZGEDK',
+    '16':'https://ar-hosting.pages.dev/f/GFVGYQK2ORRHE322LJ3XMYLZPLV3UFBTEBGEXQ44LXE3PHLY',
+    '17':'https://ar-hosting.pages.dev/f/OJZTKWCFI5JHKYTBOJXFSSRZHE6ISK6AZ645XDHB7LYWA4LC',
+    '18':'https://ar-hosting.pages.dev/f/KRUUO33UONUEMSRRPJZG2NBUN6HJGSOR6225DV6JFIU4ITL5',
+    '19':'https://ar-hosting.pages.dev/f/INKU6VDHO44VAVSYOBVU4WCIHB2V74L43UERQMO5VPB2W5BC',
+    '20':'https://ar-hosting.pages.dev/f/J5THSWBRIRDUG2SQIRVWYWSLJUM5NT6A6P6OMCRJMPL2XOWR',
+    '21':'https://ar-hosting.pages.dev/f/ONME4MLOHFQU4OLEIJGXUNCCOHCRJ2SDPT53AD5WW4QXS6DY',
+    '22':'https://ar-hosting.pages.dev/f/KAYVC6SJLI4XIVCZPJTFMVLSIQRJXJ6SVPZBR5JDWIUTRPDA',
+    '23':'https://ar-hosting.pages.dev/f/I5GXGTCWNQ4E2V2QKA3HOQ3HLLIRPNJUIQKAC5HEMPRWRJ6F',
+    '24':'https://ar-hosting.pages.dev/f/GNXFUVDJJNZWCVDDIVHEKUCMNSCR55T4RMO5FOBDVTWAAJP7'
+  };
+  let sidebarCard = null;
   let knownToken = token();
-  let currentArea = null;
-  let currentSidebarIdentity = null;
-
+  function restoreNav(navright) {
+    sidebarCard?.remove(); sidebarCard = null;
+    navright?.querySelectorAll('[data-account-hidden="1"]').forEach(el => {
+      el.style.display = ''; el.removeAttribute('data-account-hidden');
+    });
+  }
   async function refreshAccountMenu() {
     const navright = document.querySelector('.nav .navright');
-    if (!navright) return;
+    const sidebar = document.querySelector('.nav .links');
+    if (!navright || !sidebar) return;
     const currentToken = token();
-    if (!currentToken) {
-      currentArea?.remove();
-      currentArea = null;
-      currentSidebarIdentity?.remove();
-      currentSidebarIdentity = null;
-      navright.querySelectorAll('[data-account-hidden="1"]').forEach(el => { el.style.display = ''; el.removeAttribute('data-account-hidden'); });
-      return;
-    }
-    const headers = {Authorization: `Bearer ${currentToken}`};
+    if (!currentToken) { restoreNav(navright); return; }
     try {
-      const [profileResponse, friendsResponse] = await Promise.all([
-        fetch('/api/me', {headers}),
-        fetch('/api/friends', {headers})
-      ]);
-      if (!profileResponse.ok) throw new Error('Sesi masuk tidak berlaku');
-      const profileData = await profileResponse.json();
-      const friendsData = friendsResponse.ok ? await friendsResponse.json() : {incoming: []};
-      const profile = profileData.user || {};
-      const incoming = Array.isArray(friendsData.incoming) ? friendsData.incoming : [];
-      navright.querySelectorAll(':scope > :not(#theme):not(.account-area)').forEach(el => {
+      const response = await fetch('/api/me', {headers:{Authorization:`Bearer ${currentToken}`}});
+      if (response.status === 401) {
+        localStorage.removeItem('js-token'); localStorage.removeItem('js-user');
+        restoreNav(navright); return;
+      }
+      if (!response.ok) return;
+      const data = await response.json();
+      const profile = data.user;
+      if (!profile) { restoreNav(navright); return; }
+      navright.querySelectorAll(':scope > :not(#theme)').forEach(el => {
         if (el.style.display !== 'none') { el.dataset.accountHidden = '1'; el.style.display = 'none'; }
       });
-      currentArea?.remove();
-      currentArea = document.createElement('div');
-      currentArea.className = 'account-area';
-      const identity = document.createElement('a');
-      identity.className = 'account-identity';
-      identity.href = 'profil.html';
-      identity.setAttribute('aria-label', `Profil ${profile.name || 'anggota'}`);
+      sidebarCard?.remove();
+      const card = document.createElement('a');
+      card.className = 'account-sidebar-profile';
+      card.href = 'profil.html';
+      card.setAttribute('aria-label', `Profil ${profile.name || 'anggota'}, ${profile.tier || 'Inkling'}, ${Number(profile.points || 0).toLocaleString('id-ID')} poin`);
+      const avatarWrap = document.createElement('span');
+      avatarWrap.className = 'account-avatar-wrap';
       const avatar = profile.avatar_file ? document.createElement('img') : document.createElement('span');
       avatar.className = 'account-avatar';
       if (profile.avatar_file) avatar.src = `/uploads/${encodeURIComponent(profile.avatar_file)}`;
       else avatar.textContent = String(profile.name || 'A').trim().slice(0,1).toUpperCase();
-      identity.append(avatar);
-      const name = document.createElement('span');
-      name.className = 'account-name';
-      name.textContent = profile.name || 'Profil saya';
-      identity.append(name);
-      const sidebar = document.querySelector('.nav .links');
-      currentSidebarIdentity?.remove();
-      currentSidebarIdentity = null;
-      if (sidebar) {
-        currentSidebarIdentity = identity.cloneNode(true);
-        currentSidebarIdentity.className = 'account-sidebar-profile';
-        currentSidebarIdentity.addEventListener('click', () => {
-          sidebar.classList.remove('open');
-          document.body.classList.remove('menu-open');
-          const toggle = document.querySelector('.nav-toggle');
-          toggle?.setAttribute('aria-expanded', 'false');
-          if (toggle) toggle.textContent = '☰';
-        });
-        sidebar.prepend(currentSidebarIdentity);
+      avatarWrap.append(avatar);
+      const border = borders[String(profile.avatar_border || '0')];
+      if (border) {
+        const frame = document.createElement('img');
+        frame.className = 'account-avatar-frame';
+        frame.src = border; frame.alt = ''; frame.setAttribute('aria-hidden','true');
+        avatarWrap.append(frame);
       }
-      const noticeButton = document.createElement('button');
-      noticeButton.type = 'button';
-      noticeButton.className = 'account-bell';
-      noticeButton.setAttribute('aria-label', `Permintaan pertemanan: ${incoming.length}`);
-      noticeButton.setAttribute('aria-expanded', 'false');
-      noticeButton.textContent = '\u{1F514}';
-      if (incoming.length) { const count = document.createElement('span'); count.className = 'account-count'; count.textContent = incoming.length > 99 ? '99+' : String(incoming.length); noticeButton.append(count); }
-      const logoutButton = document.createElement('button');
-      logoutButton.type = 'button';
-      logoutButton.className = 'account-logout';
-      logoutButton.textContent = 'Keluar';
-      logoutButton.setAttribute('aria-label', 'Keluar dari akun');
-      logoutButton.addEventListener('click', async () => { try { await fetch('/api/logout', {method:'POST',headers}); } catch {} localStorage.removeItem('js-token'); localStorage.removeItem('js-user'); window.location.assign('index.html'); });
-      const popover = document.createElement('div');
-      popover.className = 'account-popover';
-      popover.hidden = true;
-      const heading = document.createElement('b');
-      heading.textContent = 'Permintaan pertemanan';
-      popover.append(heading);
-      if (!incoming.length) {
-        const empty = document.createElement('p');
-        empty.className = 'account-empty';
-        empty.textContent = 'Belum ada permintaan baru.';
-        popover.append(empty);
-      } else {
-        incoming.forEach(request => {
-          const row = document.createElement('div');
-          row.className = 'account-request';
-          const who = document.createElement('a');
-          who.href = `profil.html?id=${encodeURIComponent(request.user_id)}`;
-          who.textContent = request.name || 'Anggota';
-          const actions = document.createElement('div');
-          actions.className = 'account-request-actions';
-          for (const [label, action] of [['Terima','accept'],['Tolak','reject']]) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = label;
-            button.dataset.action = action;
-            button.dataset.request = String(request.id);
-            actions.append(button);
-          }
-          row.append(who, actions);
-          popover.append(row);
-        });
-      }
-      noticeButton.addEventListener('click', event => {
-        event.stopPropagation();
-        popover.hidden = !popover.hidden;
-        noticeButton.setAttribute('aria-expanded', String(!popover.hidden));
+      const info = document.createElement('span');
+      info.className = 'account-profile-info';
+      const name = document.createElement('strong');
+      name.className = 'account-name'; name.textContent = profile.name || 'Profil saya';
+      const details = document.createElement('span');
+      details.className = 'account-profile-details';
+      const tier = document.createElement('span');
+      tier.className = `account-tier tier-${profile.tier_class || 'inkling'}`;
+      tier.textContent = profile.tier || 'Inkling';
+      const points = document.createElement('span');
+      points.className = 'account-points';
+      points.textContent = `${Number(profile.points || 0).toLocaleString('id-ID')} poin`;
+      details.append(tier, points); info.append(name, details); card.append(avatarWrap, info);
+      sidebarCard = card;
+      sidebar.prepend(card);
+      card.addEventListener('click', () => {
+        sidebar.classList.remove('open'); document.body.classList.remove('menu-open');
+        const toggle = document.querySelector('.nav-toggle');
+        toggle?.setAttribute('aria-expanded','false'); if (toggle) toggle.textContent = '☰';
       });
-      popover.addEventListener('click', async event => {
-        const button = event.target.closest('button[data-action]');
-        if (!button) return;
-        button.disabled = true;
-        const id = encodeURIComponent(button.dataset.request);
-        const options = button.dataset.action === 'accept' ? {method:'POST',headers} : {method:'DELETE',headers};
-        try {
-          const response = await fetch(button.dataset.action === 'accept' ? `/api/friends/${id}/accept` : `/api/friends/${id}`, options);
-          if (!response.ok) throw new Error('Permintaan belum dapat diperbarui.');
-          await refreshAccountMenu();
-          const notify = window.showNotice || window.notice; if (notify) notify(button.dataset.action === 'accept' ? 'Permintaan diterima.' : 'Permintaan ditolak.');
-        } catch (error) {
-          button.disabled = false;
-          const notify = window.showNotice || window.notice; if (notify) notify(error.message);
-        }
-      });
-      currentArea.append(identity, noticeButton, logoutButton, popover);
-      navright.append(currentArea);
     } catch {
-      currentArea?.remove();
-      currentArea = null;
-      currentSidebarIdentity?.remove();
-      currentSidebarIdentity = null;
-      localStorage.removeItem('js-token');
-      localStorage.removeItem('js-user');
-      navright.querySelectorAll('[data-account-hidden="1"]').forEach(el => { el.style.display = ''; el.removeAttribute('data-account-hidden'); });
+      // Pertahankan sesi dan tampilan sebelumnya saat jaringan sementara bermasalah.
     }
   }
-  document.addEventListener('click', event => {
-    if (currentArea && !currentArea.contains(event.target)) {
-      const popover = currentArea.querySelector('.account-popover');
-      const bell = currentArea.querySelector('.account-bell');
-      if (popover) popover.hidden = true;
-      bell?.setAttribute('aria-expanded', 'false');
-    }
-  });
   window.refreshAccountMenu = refreshAccountMenu;
   refreshAccountMenu();
-  window.addEventListener('storage', event => { if (event.key === 'js-token') { knownToken = token(); refreshAccountMenu(); } });
+  window.addEventListener('storage', event => {
+    if (event.key === 'js-token') { knownToken = token(); refreshAccountMenu(); }
+  });
   window.setInterval(() => {
     const value = token();
     if (value !== knownToken) { knownToken = value; refreshAccountMenu(); }
