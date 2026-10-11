@@ -26,10 +26,28 @@
     '23':'https://ar-hosting.pages.dev/f/I5GXGTCWNQ4E2V2QKA3HOQ3HLLIRPNJUIQKAC5HEMPRWRJ6F',
     '24':'https://ar-hosting.pages.dev/f/GNXFUVDJJNZWCVDDIVHEKUCMNSCR55T4RMO5FOBDVTWAAJP7'
   };
-  let sidebarCard = null;
+  let sidebarCard = null, editLink = null, desktopLogout = null, mobileLogout = null;
   let knownToken = token();
+  function removeControls() {
+    sidebarCard?.remove(); editLink?.remove(); desktopLogout?.remove(); mobileLogout?.remove();
+    sidebarCard = editLink = desktopLogout = mobileLogout = null;
+    document.body.classList.remove('signed-in');
+  }
+  function closeMobileMenu() {
+    const menu = document.querySelector('.nav .links');
+    menu?.classList.remove('open'); document.body.classList.remove('menu-open');
+    const toggle = document.querySelector('.nav-toggle');
+    toggle?.setAttribute('aria-expanded', 'false'); if (toggle) toggle.textContent = '☰';
+  }
+  function logout() {
+    const currentToken = token();
+    fetch('/api/logout', {method:'POST', headers:{Authorization:`Bearer ${currentToken}`}}).catch(()=>{}).finally(() => {
+      localStorage.removeItem('js-token'); localStorage.removeItem('js-user'); knownToken = '';
+      removeControls(); location.assign('index.html');
+    });
+  }
   function restoreNav(navright) {
-    sidebarCard?.remove(); sidebarCard = null;
+    removeControls();
     navright?.querySelectorAll('[data-account-hidden="1"]').forEach(el => {
       el.style.display = ''; el.removeAttribute('data-account-hidden');
     });
@@ -50,10 +68,10 @@
       const data = await response.json();
       const profile = data.user;
       if (!profile) { restoreNav(navright); return; }
-      navright.querySelectorAll(':scope > :not(#theme)').forEach(el => {
+      navright.querySelectorAll(':scope > :not(#theme):not(.account-sidebar-logout)').forEach(el => {
         if (el.style.display !== 'none') { el.dataset.accountHidden = '1'; el.style.display = 'none'; }
       });
-      sidebarCard?.remove();
+      removeControls(); document.body.classList.add('signed-in');
       const card = document.createElement('a');
       card.className = 'account-sidebar-profile';
       card.href = 'profil.html';
@@ -87,11 +105,11 @@
       details.append(tier, points); info.append(name, details); card.append(avatarWrap, info);
       sidebarCard = card;
       sidebar.prepend(card);
-      card.addEventListener('click', () => {
-        sidebar.classList.remove('open'); document.body.classList.remove('menu-open');
-        const toggle = document.querySelector('.nav-toggle');
-        toggle?.setAttribute('aria-expanded','false'); if (toggle) toggle.textContent = '☰';
-      });
+      card.addEventListener('click', closeMobileMenu);
+      editLink = document.createElement('a'); editLink.className = 'account-sidebar-edit'; editLink.href = 'edit-profil.html'; editLink.textContent = '✎  Edit profil';
+      sidebar.insertBefore(editLink, card.nextSibling); editLink.addEventListener('click', closeMobileMenu);
+      desktopLogout = document.createElement('button'); desktopLogout.type = 'button'; desktopLogout.className = 'account-sidebar-logout'; desktopLogout.textContent = 'Keluar'; desktopLogout.addEventListener('click', logout); navright.append(desktopLogout);
+      mobileLogout = document.createElement('button'); mobileLogout.type = 'button'; mobileLogout.className = 'account-mobile-logout'; mobileLogout.textContent = 'Keluar dari akun'; mobileLogout.addEventListener('click', logout); sidebar.append(mobileLogout);
     } catch {
       // Pertahankan sesi dan tampilan sebelumnya saat jaringan sementara bermasalah.
     }
