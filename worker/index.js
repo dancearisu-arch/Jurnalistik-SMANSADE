@@ -6,7 +6,7 @@ const token = (n=32) => { const b=new Uint8Array(n); crypto.getRandomValues(b); 
 const hex = b => [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
 async function passwordHash(password, salt=token(16)) {
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
-  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:240000},key,256);
+  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:100000},key,256);
   return `${salt}:${hex(bits)}`;
 }
 async function checkPassword(password, stored) { const [salt,expected='']=String(stored).split(':'); const actual=(await passwordHash(password,salt)).split(':')[1]; return actual===expected; }
