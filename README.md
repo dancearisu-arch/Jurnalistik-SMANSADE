@@ -22,16 +22,28 @@ Paket ini berisi situs statis dan API Cloudflare Worker, dengan D1 untuk data ap
 
 - Kartu artikel dan karya siswa menampilkan cuplikan setengah paragraf pertama; tautan **Baca selengkapnya** membuka `public/baca.html` untuk membaca satu tulisan penuh.
 - Editor artikel dan karya siswa menyediakan ukuran teks, warna teks, dan daftar isi yang tertaut ke subjudul.
-- Tier poin baru ditentukan otomatis oleh Worker. Border spesial otomatis aktif pada profil peringkat pertama; server menolak permintaan border tersebut dari akun lain.
+- Tier poin baru ditentukan otomatis oleh Worker. Border khusus hanya dapat dipilih admin atau member yang aksesnya diberikan admin.
 - Setelah mengunggah perubahan, commit dan push ke branch `main`; Cloudflare akan menjalankan deployment dari GitHub.
 
-- Border event memakai PNG khusus; otomatis tampil pada avatar juara rank 1 di leaderboard dan tersedia untuk profil admin. API menolak pemakaian oleh akun lain.
+- Border khusus dari link PNG tersedia untuk admin; member lain terkunci sampai admin membagikan akses melalui D1 SQL. Border khusus tidak ditampilkan di leaderboard.
 
 
 ## Akses border khusus
 
-Border event adalah pilihan border biasa dan tidak otomatis dipasang. Rank 1 mendapat akses otomatis dan aksesnya tersimpan; admin juga dapat memilihnya. Anggota lain melihat pilihan terkunci sampai admin memberikan akses.
+Border dari link `PBSEQ...` hanya dapat dipakai admin secara default. Member lain melihat pilihan terkunci sampai admin memberi izin lewat D1 Console. Border ini tidak muncul di leaderboard; leaderboard menampilkan border profil normal member (Border 1–14) mengelilingi avatar.
 
-Pada D1 Console, jalankan isi `border-access.sql` sekali untuk membuat tabel akses dan migrasi border lama. Untuk membagikan akses, ganti `EMAIL_ANGGOTA` di perintah `INSERT OR IGNORE` dalam file itu dengan email anggota lalu jalankan. Perintah `UPDATE` opsional akan langsung memasang border; tanpa itu anggota dapat memilihnya sendiri di profil. Bagian `DELETE` mencabut akses.
+Setelah mengunggah perubahan, jalankan `border-access.sql` sekali di D1 Console. Migrasi ini mencabut akses lama yang sebelumnya diberikan otomatis kepada Top 1 dan menghapus border khusus dari profil member. Untuk memberi izin, ganti `EMAIL_ANGGOTA` pada query berikut lalu jalankan di D1 Console:
 
-Leaderboard hanya menampilkan border ini jika anggota sedang memilihnya di profil. Akun admin tetap tidak masuk ranking.
+```sql
+INSERT OR IGNORE INTO user_border_access(user_id,border_id,granted_at)
+SELECT id,15,datetime('now') FROM users WHERE lower(email)=lower('EMAIL_ANGGOTA');
+```
+
+Member tersebut kemudian dapat memilih border khusus di profil. Untuk mencabutnya, jalankan dua query berikut:
+
+```sql
+DELETE FROM user_border_access WHERE border_id=15
+AND user_id=(SELECT id FROM users WHERE lower(email)=lower('EMAIL_ANGGOTA'));
+UPDATE users SET avatar_border='0'
+WHERE lower(email)=lower('EMAIL_ANGGOTA') AND avatar_border='15';
+```
