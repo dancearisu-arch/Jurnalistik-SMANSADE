@@ -1,6 +1,7 @@
 const KINDS = new Set(['dokumentasi','artikel','liputan','karya','suara']);
 const TIER_BORDER_MIN = {16:100,17:300,18:700,19:1300,20:2100,21:3200,22:4600,23:6200,24:8000};
 const tierBorderMin = id => TIER_BORDER_MIN[id] || 0;
+let tierBorderTableReady = false;
 const json = (data, status=200) => new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
 const clean = (v,n=12000) => String(v ?? '').trim().slice(0,n);
 const date = () => new Date().toISOString();
@@ -29,15 +30,35 @@ async function bootstrap(env) {
   else if(exists.role!=='admin') await env.DB.prepare("UPDATE users SET role='admin',points_bonus=9999 WHERE id=?").bind(exists.id).run();
 }
 async function hasBorderAccess(env,id,borderId=15) { try { return Boolean(await env.DB.prepare('SELECT user_id FROM user_border_access WHERE user_id=? AND border_id=?').bind(id,borderId).first()); } catch { return false; } }
+async function ensureTierBorderTable(env) {
+  if(tierBorderTableReady)return true;
+  try {
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS user_border_access(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,border_id INTEGER NOT NULL,granted_at TEXT NOT NULL,PRIMARY KEY(user_id,border_id))').run();
+    tierBorderTableReady=true;
+    return true;
+  } catch(error) {
+    console.error('Tier border table init failed:',error?.message||error);
+    return false;
+  }
+}
 async function syncTierBorders(env,id,score) {
   const earned=Object.entries(TIER_BORDER_MIN).filter(([,min])=>Number(score)>=min);
   if(!earned.length)return 0;
-  for(const [borderId] of earned) await env.DB.prepare('INSERT OR IGNORE INTO user_border_access(user_id,border_id,granted_at) VALUES(?,?,?)').bind(id,Number(borderId),date()).run();
+  if(await ensureTierBorderTable(env)) {
+    try { for(const [borderId] of earned) await env.DB.prepare('INSERT OR IGNORE INTO user_border_access(user_id,border_id,granted_at) VALUES(?,?,?)').bind(id,Number(borderId),date()).run(); }
+    catch(error) { console.error('Tier border sync failed:',error?.message||error); }
+  }
   const highest=Number(earned.at(-1)[0]);
-  const changed=await env.DB.prepare("UPDATE users SET avatar_border=? WHERE id=? AND COALESCE(NULLIF(avatar_border,''),'0')='0'").bind(String(highest),id).run();
-  return changed.meta?.changes?highest:0;
+  try { await env.DB.prepare("UPDATE users SET avatar_border=? WHERE id=? AND COALESCE(NULLIF(avatar_border,''),'0')='0'").bind(String(highest),id).run(); }
+  catch(error) { console.error('Tier border auto-equip failed:',error?.message||error); }
+  return highest;
 }
-async function getTierBorderAccess(env,id) { try { const r=await env.DB.prepare('SELECT border_id FROM user_border_access WHERE user_id=? AND border_id BETWEEN 16 AND 24').bind(id).all(); return r.results.map(x=>Number(x.border_id)); } catch { return []; } }
+async function getTierBorderAccess(env,id,score=0) {
+  const unlocked=new Set(Object.entries(TIER_BORDER_MIN).filter(([,min])=>Number(score)>=min).map(([borderId])=>Number(borderId)));
+  try { const r=await env.DB.prepare('SELECT border_id FROM user_border_access WHERE user_id=? AND border_id BETWEEN 16 AND 24').bind(id).all(); for(const row of r.results)unlocked.add(Number(row.border_id)); } catch {}
+  return [...unlocked].sort((a,b)=>a-b);
+}
+async function hasTierBorderAccess(env,id,borderId,score=0) { return await hasBorderAccess(env,id,borderId)||Number(score)>=tierBorderMin(borderId); }
 async function points(env,id) {
   const row=await env.DB.prepare(`SELECT u.points_bonus+u.points_adjustment+
     10*(SELECT COUNT(*) FROM contents x WHERE x.author_id=u.id AND x.kind='karya' AND x.status='published')+
@@ -52,11 +73,11 @@ async function profile(env,id,privateView=false) {
   const works=await env.DB.prepare(`SELECT x.id,x.title,x.body,x.file_name,x.original_name,x.mime,x.created_at,
     (SELECT ROUND(AVG(value),1) FROM ratings WHERE content_id=x.id) rating,(SELECT COUNT(*) FROM ratings WHERE content_id=x.id) rating_count
     FROM contents x WHERE x.author_id=? AND x.kind='karya' AND x.status='published' ORDER BY x.created_at DESC`).bind(id).all();
-  u.works=works.results; u.points=await points(env,id); const tier=tierFor(u.points); u.tier=tier.name; u.tier_class=tier.className; const newlyUnlocked=await syncTierBorders(env,id,u.points); u.unlocked_tier_borders=await getTierBorderAccess(env,id); if(newlyUnlocked&&String(u.avatar_border||'0')==='0')u.avatar_border=String(newlyUnlocked);
+  u.works=works.results; u.points=await points(env,id); const tier=tierFor(u.points); u.tier=tier.name; u.tier_class=tier.className; const newlyUnlocked=await syncTierBorders(env,id,u.points); u.unlocked_tier_borders=await getTierBorderAccess(env,id,u.points); if(newlyUnlocked&&String(u.avatar_border||'0')==='0')u.avatar_border=String(newlyUnlocked);
   const leaders=await env.DB.prepare(`SELECT id FROM users WHERE role='member' ORDER BY points_bonus+points_adjustment+
     10*(SELECT COUNT(*) FROM contents x WHERE x.author_id=users.id AND x.kind='karya' AND x.status='published')+
     COALESCE((SELECT SUM(r.value) FROM ratings r JOIN contents x ON x.id=r.content_id WHERE x.author_id=users.id AND x.kind IN ('dokumentasi','karya') AND x.status='published'),0) DESC,name COLLATE NOCASE,id`).all();
-  const rank=leaders.results.findIndex(x=>x.id===id)+1; u.rank=rank||null; u.leader_title=rank===1?'Juara Kreativitas':rank===2||rank===3?`Bintang Kreativitas #${rank}`:''; u.can_use_champion_border=u.role==='admin'||await hasBorderAccess(env,id); u.avatar_border=String(u.avatar_border||'0'); const minBorderPoints=tierBorderMin(Number(u.avatar_border)); if((u.avatar_border==='15'&&!u.can_use_champion_border)||(minBorderPoints&&!await hasBorderAccess(env,id,Number(u.avatar_border))))u.avatar_border='0';
+  const rank=leaders.results.findIndex(x=>x.id===id)+1; u.rank=rank||null; u.leader_title=rank===1?'Juara Kreativitas':rank===2||rank===3?`Bintang Kreativitas #${rank}`:''; u.can_use_champion_border=u.role==='admin'||await hasBorderAccess(env,id); u.avatar_border=String(u.avatar_border||'0'); const minBorderPoints=tierBorderMin(Number(u.avatar_border)); if((u.avatar_border==='15'&&!u.can_use_champion_border)||(minBorderPoints&&!await hasTierBorderAccess(env,id,Number(u.avatar_border),u.points)))u.avatar_border='0';
   return u;
 }
 async function contents(env,kind='') {
@@ -124,7 +145,7 @@ async function api(req,env,url) {
     const leaderboard=[];
     for(let i=0;i<rows.results.length;i++){
       const x=rows.results[i],tier=tierFor(x.points),newlyUnlocked=await syncTierBorders(env,x.id,x.points),savedBorder=String(x.avatar_border||'0'),border=savedBorder==='0'&&newlyUnlocked?String(newlyUnlocked):savedBorder,min=tierBorderMin(Number(border));
-      const earned=min?await hasBorderAccess(env,x.id,Number(border)):false,visibleBorder=/^(?:[1-9]|1[0-4])$/.test(border)||min&&earned?border:'0';
+      const earned=min?await hasTierBorderAccess(env,x.id,Number(border),x.points):false,visibleBorder=/^(?:[1-9]|1[0-4])$/.test(border)||min&&earned?border:'0';
       leaderboard.push({...x,rank:i+1,avatar_border:visibleBorder,tier:tier.name,tier_class:tier.className,title:i===0?'Juara Kreativitas':i<3?`Bintang Kreativitas #${i+1}`:''});
     }
     return json({leaderboard});
@@ -142,7 +163,7 @@ async function api(req,env,url) {
   const download=path.match(/^\/api\/download\/(\d+)$/);if(method==='GET'&&download){const row=await env.DB.prepare('SELECT file_name,original_name,mime FROM contents WHERE id=? AND status=?').bind(Number(download[1]),'published').first();if(!row?.file_name)return fail('Berkas tidak ditemukan.',404);const obj=await env.FILES.get(row.file_name,{type:'arrayBuffer'});return obj?new Response(obj,{headers:{'content-type':row.mime||'application/octet-stream','content-disposition':`attachment; filename*=UTF-8''${encodeURIComponent(row.original_name||'download')}`}}):fail('Berkas tidak tersedia.',404);}
   if(method==='POST'&&path==='/api/profile'){
     const u=await needUser(req,env);if(!u)return fail('Silakan masuk terlebih dahulu.',401);let form;try{form=await req.formData();}catch{return fail('Gunakan form profil.');}
-    const name=clean(form.get('name'),100),bio=clean(form.get('bio'),1200),border=clean(form.get('avatar_border')||'0',2);if(name.length<2)return fail('Nama minimal 2 karakter.');if(!/^(?:0|[1-9]|1[0-9]|2[0-4])$/.test(border))return fail('Pilihan border tidak valid.');if(border==='15'&&u.role!=='admin'&&!await hasBorderAccess(env,u.id))return fail('Border ini terkunci. Minta admin memberi akses melalui SQL.',403);const requiredPoints=tierBorderMin(Number(border));if(requiredPoints){await syncTierBorders(env,u.id,await points(env,u.id));if(!await hasBorderAccess(env,u.id,Number(border)))return fail(`Border ini terbuka saat mencapai ${tierFor(requiredPoints).name} (${requiredPoints.toLocaleString('id-ID')} poin).`,403);}let avatar=null,banner=null;
+    const name=clean(form.get('name'),100),bio=clean(form.get('bio'),1200),border=clean(form.get('avatar_border')||'0',2);if(name.length<2)return fail('Nama minimal 2 karakter.');if(!/^(?:0|[1-9]|1[0-9]|2[0-4])$/.test(border))return fail('Pilihan border tidak valid.');if(border==='15'&&u.role!=='admin'&&!await hasBorderAccess(env,u.id))return fail('Border ini terkunci. Minta admin memberi akses melalui SQL.',403);const requiredPoints=tierBorderMin(Number(border));if(requiredPoints){const currentPoints=await points(env,u.id);await syncTierBorders(env,u.id,currentPoints);if(!await hasTierBorderAccess(env,u.id,Number(border),currentPoints))return fail(`Border ini terbuka saat mencapai ${tierFor(requiredPoints).name} (${requiredPoints.toLocaleString('id-ID')} poin).`,403);}let avatar=null,banner=null;
     for(const field of ['avatar','banner']){const f=form.get(field);if(!(f instanceof File)||!f.size)continue;const allowed=field==='avatar'?['image/jpeg','image/png','image/gif','image/webp']:['image/jpeg','image/png','image/gif','image/webp','video/mp4','video/webm','video/quicktime'];if(!allowed.includes(f.type))return fail(`Format ${field} tidak didukung.`,415);try{const x=await saveFile(env,f);if(field==='avatar')avatar=x;else banner=x;}catch(e){return fail(e.message,413);}}
     await env.DB.prepare('UPDATE users SET name=?,bio=?,avatar_border=?,avatar_file=COALESCE(?,avatar_file),banner_file=COALESCE(?,banner_file),banner_mime=COALESCE(?,banner_mime) WHERE id=?').bind(name,bio,border,avatar?.name||null,banner?.name||null,banner?.mime||null,u.id).run();return json({ok:true,profile:await profile(env,u.id)});
   }
