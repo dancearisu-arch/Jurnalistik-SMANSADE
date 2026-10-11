@@ -17,3 +17,12 @@ Paket ini berisi situs statis dan API Cloudflare Worker, dengan D1 untuk data ap
 - Alur lupa kata sandi belum mengirim email. Integrasi layanan email perlu disiapkan sebelum reset kata sandi lewat email dapat dipakai.
 - Batas unggahan pada Worker adalah 20 MB; perhatikan kuota KV paket gratis.
 - Jika repo pernah publik, menghapus file pada commit terbaru tidak menghapus salinannya di riwayat Git. Bersihkan riwayat sebelum membuat repo publik lagi.
+
+## Update fitur
+
+- Kartu artikel dan karya siswa menampilkan cuplikan setengah paragraf pertama; tautan **Baca selengkapnya** membuka `public/baca.html` untuk membaca satu tulisan penuh.
+- Editor artikel dan karya siswa menyediakan ukuran teks, warna teks, dan daftar isi yang tertaut ke subjudul.
+- Tier poin baru ditentukan otomatis oleh Worker. Border spesial otomatis aktif pada profil peringkat pertama; server menolak permintaan border tersebut dari akun lain.
+- Setelah mengunggah perubahan, commit dan push ke branch `main`; Cloudflare akan menjalankan deployment dari GitHub.
+
+- Border event memakai PNG khusus; otomatis tampil pada avatar juara rank 1 di leaderboard dan tersedia untuk profil admin. API menolak pemakaian oleh akun lain.
