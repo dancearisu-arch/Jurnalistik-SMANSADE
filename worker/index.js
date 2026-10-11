@@ -22,9 +22,9 @@ const safeName = s => clean(s,180).replace(/[\\/\0]/g,'_') || 'upload.bin';
 async function bootstrap(env) {
   if(!env.ADMIN_EMAIL || !env.ADMIN_PASSWORD) return;
   const email=clean(env.ADMIN_EMAIL,254).toLowerCase();
-  const exists=await env.DB.prepare('SELECT id,role FROM users WHERE email=?').bind(email).first();
+  const exists=await env.DB.prepare('SELECT id,role,points_bonus FROM users WHERE email=?').bind(email).first();
   if(!exists) await env.DB.prepare('INSERT INTO users(name,email,password,role,created_at,points_bonus) VALUES(?,?,?,?,?,9999)').bind('Admin Jurnalistik',email,await passwordHash(env.ADMIN_PASSWORD),'admin',date()).run();
-  else if(exists.role!=='admin') await env.DB.prepare("UPDATE users SET role='admin',points_bonus=9999 WHERE id=?").bind(exists.id).run();
+  else if(exists.role!=='admin'||exists.points_bonus!==9999) await env.DB.prepare("UPDATE users SET role='admin',points_bonus=9999 WHERE id=?").bind(exists.id).run();
 }
 async function points(env,id) {
   const row=await env.DB.prepare(`SELECT u.points_bonus+u.points_adjustment+
@@ -75,13 +75,21 @@ async function api(req,env,url) {
     const d=await bodyJson(req); if(!d)return fail('Permintaan JSON tidak valid.');
     const name=clean(d.name,100),email=clean(d.email,254).toLowerCase(),pw=String(d.password||'');
     if(!name||!/^\S+@\S+\.\S+$/.test(email)||pw.length<8)return fail('Isi nama, email yang valid, dan kata sandi minimal 8 karakter.');
-    try{const r=await env.DB.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').bind(name,email,await passwordHash(pw),'member',date()).run();const t=token();await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)').bind(t,r.meta.last_row_id,new Date(Date.now()+14*86400000).toISOString()).run();return json({token:t,user:{id:r.meta.last_row_id,name,email,role:'member'}},201);}catch{return fail('Email sudah terdaftar.',409);}
+    const adminEmail=clean(env.ADMIN_EMAIL,254).toLowerCase();
+    const existing=await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(email).first();
+    if(existing)return fail(email===adminEmail?'Email admin sudah terdaftar. Gunakan Masuk dengan kata sandi ADMIN_PASSWORD.':'Email sudah terdaftar. Silakan masuk dengan akun tersebut.',409);
+    try{const r=await env.DB.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').bind(name,email,await passwordHash(pw),'member',date()).run();const t=token();await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)').bind(t,r.meta.last_row_id,new Date(Date.now()+14*86400000).toISOString()).run();return json({token:t,user:{id:r.meta.last_row_id,name,email,role:'member'}},201);}catch(err){console.error('Registration failed',err);if(/UNIQUE constraint failed:\s*users\.email/i.test(String(err?.message||err)))return fail('Email sudah terdaftar. Silakan masuk dengan akun tersebut.',409);return fail('Pendaftaran gagal. Pastikan skema D1 sudah dijalankan dan binding database DB terhubung.',500);}
   }
   if(method==='POST' && path==='/api/login'){
     const d=await bodyJson(req);if(!d)return fail('Permintaan JSON tidak valid.');
-    const row=await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(clean(d.email,254).toLowerCase()).first();
-    if(!row||!await checkPassword(String(d.password||''),row.password))return fail('Email atau kata sandi tidak cocok.',401);
-    const t=token();await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)').bind(t,row.id,new Date(Date.now()+14*86400000).toISOString()).run();return json({token:t,user:{id:row.id,name:row.name,email:row.email,role:row.role}});
+    const email=clean(d.email,254).toLowerCase(),password=String(d.password||'');
+    const row=await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first();
+    if(!row)return fail('Email atau kata sandi tidak cocok.',401);
+    const configuredAdmin=email===clean(env.ADMIN_EMAIL,254).toLowerCase()&&Boolean(env.ADMIN_PASSWORD)&&password===env.ADMIN_PASSWORD;
+    if(!configuredAdmin&&!await checkPassword(password,row.password))return fail('Email atau kata sandi tidak cocok.',401);
+    if(configuredAdmin&&(!await checkPassword(password,row.password)||row.role!=='admin'))await env.DB.prepare("UPDATE users SET password=?,role='admin',points_bonus=9999 WHERE id=?").bind(await passwordHash(password),row.id).run();
+    const role=configuredAdmin?'admin':row.role;
+    const t=token();await env.DB.prepare('INSERT INTO sessions VALUES(?,?,?)').bind(t,row.id,new Date(Date.now()+14*86400000).toISOString()).run();return json({token:t,user:{id:row.id,name:row.name,email:row.email,role}});
   }
   if(method==='POST'&&path==='/api/logout'){const t=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim();if(t)await env.DB.prepare('DELETE FROM sessions WHERE token=?').bind(t).run();return json({ok:true});}
   if(method==='POST'&&path==='/api/password/forgot')return fail('Pemulihan email belum dikonfigurasi. Hubungi admin untuk mengatur ulang kata sandi.',503);
